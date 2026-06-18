@@ -95,6 +95,9 @@
 #endif
 #endif
 #include "commonrdr.h"
+#ifdef USE_VPP
+#include "vpp/vpp_nat.h"
+#endif
 #include "upnputils.h"
 #ifdef USE_IFACEWATCHER
 #include "ifacewatcher.h"
@@ -2897,6 +2900,16 @@ main(int argc, char * * argv)
 		FD_ZERO(&readset);
 		FD_ZERO(&writeset);
 
+#ifdef USE_VPP
+		{
+			int vpp_fd = vpp_get_event_fd();
+			if (vpp_fd >= 0) {
+				FD_SET(vpp_fd, &readset);
+				max_fd = MAX(max_fd, vpp_fd);
+			}
+		}
+#endif
+
 		if (sudp >= 0)
 		{
 			FD_SET(sudp, &readset);
@@ -3058,6 +3071,14 @@ main(int argc, char * * argv)
 		if(i < 0) {
 			syslog(LOG_ERR, "try_sendto failed to send %d packets", -i);
 		}
+#ifdef USE_VPP
+		/* Answer VPP keepalive pings to prevent idle-timeout disconnects. */
+		{
+			int vpp_fd = vpp_get_event_fd();
+			if (vpp_fd >= 0 && FD_ISSET(vpp_fd, &readset))
+				vpp_dispatch_events();
+		}
+#endif
 #ifdef USE_MINIUPNPDCTL
 		for(ectl = ctllisthead.lh_first; ectl;)
 		{

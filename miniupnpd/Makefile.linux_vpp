@@ -1,0 +1,152 @@
+# Makefile.linux_vpp -- MiniUPnP project
+# VPP NAT44-ED backend for Linux
+# (c) 2025 -- adapted from Makefile.linux_nft
+#
+# Usage:
+#   $ CONFIG_OPTIONS="--ipv6 --igd2 --leasefile" make -f Makefile.linux_vpp
+# or via configure:
+#   $ ./configure --firewall=vpp [options]
+#   $ make
+#
+CONFIG_OPTIONS ?= $(shell cat .configure.cache)
+ifeq ($(filter --firewall=vpp,$(CONFIG_OPTIONS)),)
+CONFIG_OPTIONS += --firewall=vpp
+endif
+
+, := ,
+ifeq ($(filter -D_FORTIFY_SOURCE=% -Wp$(,)-D_FORTIFY_SOURCE=%,$(CPPFLAGS) $(CFLAGS)),)
+CPPFLAGS += -D_FORTIFY_SOURCE=2
+endif
+CPPFLAGS += -D_GNU_SOURCE
+CPPFLAGS += -DUSE_VPP
+
+CFLAGS ?= -Os
+CFLAGS += -fno-strict-aliasing
+CFLAGS += -fno-common
+CFLAGS += -fstack-protector -fPIE
+CFLAGS += -Wall
+CFLAGS += -Wextra -Wstrict-prototypes -Wdeclaration-after-statement
+LDFLAGS += -Wl,-z,now -Wl,-z,relro -pie
+CC ?= gcc
+RM = rm -f
+INSTALL = install
+STRIP ?= strip
+CP = cp
+DOXYGEN ?= doxygen
+
+DEPDIR := .depend
+DEPFLAGS = -MMD -MP -MF $(@:%.o=$(DEPDIR)/%.d) -MT $@
+
+INSTALLPREFIX ?= $(PREFIX)/usr
+ETCDIR ?= $(PREFIX)/etc
+SBINDIR ?= $(INSTALLPREFIX)/sbin
+MANDIR ?= $(INSTALLPREFIX)/share/man
+LIBDIR ?= $(INSTALLPREFIX)/lib
+
+CONFIGDIR = $(ETCDIR)/miniupnpd
+INITDIR = $(ETCDIR)/init.d
+SYSTEMDUNITDIR = $(LIBDIR)/systemd/system
+
+include config.mk
+include $(SRCDIR)/gitrev.mk
+include $(SRCDIR)/objects.mk
+
+# VPP backend objects (replaces nftnlrdr.o etc.)
+# getifaddr_vpp.o provides getifaddr() that queries VPP for VPP-native
+# interfaces, falling through to kernel ioctl for LAN TAP/LCP interfaces.
+VPPOBJS = vpp_nat.o getifaddr_vpp.o
+
+# common.mk's miniupnpd target references $(NETFILTEROBJS); alias it.
+NETFILTEROBJS = $(VPPOBJS)
+
+# Filter getifaddr.o out of BASEOBJS for the VPP backend (replaced by
+# getifaddr_vpp.o).  We redefine BASEOBJS here as an immediate variable
+# so the filter takes effect before common.mk sees it.
+BASEOBJS := miniupnpd.o upnphttp.o upnpdescgen.o upnpsoap.o \
+           upnpreplyparse.o minixml.o portinuse.o \
+           upnpredirect.o daemonize.o \
+           options.o upnppermissions.o minissdp.o natpmp.o pcpserver.o \
+           upnpglobalvars.o upnpevents.o upnputils.o getconnstatus.o \
+           upnpstun.o upnppinhole.o pcplearndscp.o asyncsendto.o
+
+ALLOBJS = $(BASEOBJS) $(LNXOBJS) $(VPPOBJS) $(OTHEROBJS)
+
+# VPP VAPI headers live in $(VPP_INCLUDE_DIR)/vapi/.
+# Override for cross-compilation:
+#   make VPP_INCLUDE_DIR=$$STAGING_DIR/usr/include
+VPP_INCLUDE_DIR ?= /usr/include
+CPPFLAGS += -I$(VPP_INCLUDE_DIR)
+
+EXECUTABLES = miniupnpd miniupnpdctl
+
+ifeq ($(TESTS), 1)
+EXECUTABLES += testupnpdescgen testgetifstats \
+               testupnppermissions testgetifaddr \
+               testgetroute testasyncsendto testportinuse \
+               testssdppktgen testminissdp testifacewatcher \
+               teststun
+endif
+
+.PHONY: all clean install dox
+
+all: $(EXECUTABLES)
+
+clean:
+	$(RM) $(ALLOBJS)
+	$(RM) -r $(DEPDIR)
+	$(RM) $(EXECUTABLES)
+	$(RM) validateupnppermissions validategetifaddr validatessdppktgen
+	$(RM) validateversion
+	$(RM) -r dox/
+
+install: miniupnpd $(SRCDIR)/miniupnpd.8 $(SRCDIR)/miniupnpd.conf \
+		$(SRCDIR)/linux/miniupnpd.init.d.script \
+		$(SRCDIR)/linux/miniupnpd.iptables.service
+	$(STRIP) miniupnpd
+	$(INSTALL) -D -m 0755 miniupnpd -t $(DESTDIR)$(SBINDIR)
+	$(INSTALL) -D -m 0644 -b $(SRCDIR)/miniupnpd.conf -t $(DESTDIR)$(CONFIGDIR)
+	sed -i -e "s/^uuid=[-0-9a-f]*/uuid=$(shell $(UUIDBIN))/" $(DESTDIR)$(CONFIGDIR)/miniupnpd.conf
+ifneq ($(USE_SYSTEMD),)
+	$(INSTALL) -D -m 0644 $(SRCDIR)/linux/miniupnpd.vpp.service $(DESTDIR)$(SYSTEMDUNITDIR)/miniupnpd.service
+	sed -r \
+		-e "s|%BINDIR%|$(SBINDIR)|" \
+		-e "s|%CONFIGDIR%|$(CONFIGDIR)|" \
+		-i $(DESTDIR)/$(SYSTEMDUNITDIR)/miniupnpd.service
+	sed -r \
+		-e "s|(#lease_file)=.*|\1=/var/lib/miniupnpd/upnp.leases|" \
+		-i $(DESTDIR)/$(CONFIGDIR)/miniupnpd.conf
+else
+	$(INSTALL) -D -m 0755 $(SRCDIR)/linux/miniupnpd.init.d.script $(DESTDIR)$(INITDIR)/miniupnpd
+endif
+	$(INSTALL) -D -m 0644 $(SRCDIR)/miniupnpd.8 -t $(DESTDIR)$(MANDIR)/man8
+	gzip -f $(DESTDIR)$(MANDIR)/man8/miniupnpd.8
+
+include $(SRCDIR)/check.mk
+
+include $(SRCDIR)/common.mk
+
+testportinuse: testportinuse.o portinuse.o getifaddr.o \
+	upnputils.o getroute.o \
+	vpp_nat.o
+
+teststun: teststun.o upnpstun.o \
+	upnputils.o getroute.o getifaddr.o \
+	vpp_nat.o
+
+config.mk config.h: $(SRCDIR)/configure $(SRCDIR)/VERSION
+	$(SHELL) $< $(CONFIG_OPTIONS)
+
+%.o: $(SRCDIR)/%.c $(DEPDIR)/%.d | $(DEPDIR)
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) $< -o $@
+
+%.o: $(SRCDIR)/linux/%.c $(DEPDIR)/%.d | $(DEPDIR)
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) $< -o $@
+
+%.o: $(SRCDIR)/vpp/%.c $(DEPDIR)/%.d | $(DEPDIR)
+	$(CC) -c $(DEPFLAGS) $(CFLAGS) $(CPPFLAGS) $< -o $@
+
+DEPFILES := $(ALLOBJS:%.o=$(DEPDIR)/%.d)
+$(DEPDIR): ; @mkdir -p $@
+$(DEPFILES):
+
+-include $(wildcard $(DEPFILES))

@@ -44,6 +44,9 @@
 #if defined(USE_IPFW)
 #include "ipfw/ipfwrdr.h"
 #endif
+#if defined(USE_VPP)
+#include "vpp/vpp_nat.h"
+#endif
 
 /*! \brief Generate random STUN Transaction Id
  * \param[out] transaction_id */

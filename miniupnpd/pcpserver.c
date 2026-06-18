@@ -89,12 +89,13 @@ POSSIBILITY OF SUCH DAMAGE.
 
 
 #ifdef PCP_PEER
-/* TODO make this platform independent */
 #ifdef USE_NETFILTER
 #include "netfilter/iptcrdr.h"
+#elif defined(USE_VPP)
+#include "vpp/vpp_nat.h"
 #else
-#error "PCP Peer is only supported with NETFILTER"
-#endif /* USE_NETFILTER */
+#error "PCP Peer requires a supported firewall backend (USE_NETFILTER or USE_VPP)"
+#endif /* USE_NETFILTER / USE_VPP */
 #endif /* PCP_PEER */
 
 /* server specific information */

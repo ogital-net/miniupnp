@@ -1,0 +1,25 @@
+[Unit]
+Description=Lightweight UPnP IGD daemon (VPP backend)
+Documentation=man:miniupnpd(8)
+After=network.target network-online.target vpp.service
+Wants=network-online.target
+Requires=vpp.service
+
+[Service]
+Type=notify
+ExecStart=/bin/sh -c 'exec %BINDIR%/miniupnpd -D \
+	-f %CONFIGDIR%/miniupnpd.conf \
+	-p /run/miniupnpd/miniupnpd.pid \
+	-u "$(systemd-id128 --uuid machine-id)" "$@" \
+' - $MINIUPNPD_ARGS
+
+Environment=MINIUPNPD_ARGS=
+EnvironmentFile=-/etc/conf.d/miniupnpd
+
+StateDirectory=miniupnpd
+RuntimeDirectory=miniupnpd
+ConfigurationDirectory=miniupnpd
+PIDFile=/run/miniupnpd/miniupnpd.pid
+
+[Install]
+WantedBy=multi-user.target

@@ -91,7 +91,7 @@ case "$argv" in
 		echo " --https-key=/path     Path to the HTTPS private key (default to ${HTTPS_KEYFILE})"
 		echo " --uda-version=x.x     Set advertised UPnP version (default to ${UPNP_VERSION_MAJOR}.${UPNP_VERSION_MINOR})"
 		echo " --disable-pppconn     Disable WANPPPConnection"
-		echo " --firewall=<name>     Force firewall type (nftables, iptables, pf, ipf, ipfw)"
+		echo " --firewall=<name>     Force firewall type (nftables, iptables, pf, ipf, ipfw, vpp)"
 		echo " --libpfctl            Use libpfctl"
 		echo " --iptablespath=/path  Use a specific version of iptables"
 		echo " --disable-fork        Do not go to background and do not write pid file"
@@ -719,6 +719,22 @@ case $FW in
 			echo "Warning: no libnftnl or libmnl pkg-config found"
 		fi
 		;;
+	vpp)
+		if ! [ "$OS_FAMILY" = "Linux" ] ; then
+			echo "Error: --firewall=$FW is only available on Linux"
+			exit 1
+		fi
+
+		MAKEFILE=Makefile.linux_vpp
+		echo "#define USE_VPP 1" >> ${CONFIGFILE}
+		# Check that VPP development headers are present
+		if [ -f /usr/include/vapi/vapi.h ] ; then
+			echo "found VPP VAPI headers (/usr/include/vapi/vapi.h)"
+		else
+			echo "Warning: VPP VAPI headers not found; install vpp-dev"
+		fi
+		echo "LDLIBS += -lvapiclient" >> ${CONFIG_MK}
+		;;
 	*)
 		echo "Unknown Firewall/packet filtering software [$FW]"
 		echo "Please contact the author at http://miniupnp.free.fr/ or https://miniupnp.tuxfamily.org/."
@@ -726,7 +742,7 @@ case $FW in
 		;;
 esac
 
-if [ "$MAKEFILE" = "Makefile.linux" ] || [ "$MAKEFILE" = "Makefile.linux_nft" ] || [ "$MAKEFILE" = "Makefile.macosx" ] ; then
+if [ "$MAKEFILE" = "Makefile.linux" ] || [ "$MAKEFILE" = "Makefile.linux_nft" ] || [ "$MAKEFILE" = "Makefile.linux_vpp" ] || [ "$MAKEFILE" = "Makefile.macosx" ] ; then
 	DEFAULT_CONFIG=/etc/miniupnpd/miniupnpd.conf
 else
 	DEFAULT_CONFIG=/etc/miniupnpd.conf

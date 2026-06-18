@@ -38,6 +38,9 @@
 #if defined(USE_IPFW)
 #include "ipfw/ipfwrdr.h"
 #endif
+#ifdef USE_VPP
+#include "vpp/vpp_nat.h"
+#endif
 #ifdef USE_MINIUPNPDCTL
 #include <stdio.h>
 #include <unistd.h>
@@ -545,7 +548,7 @@ upnp_delete_redirection(unsigned short eport, const char * protocol)
 int
 upnp_get_portmapping_number_of_entries(void)
 {
-#if defined(USE_PF) || defined(USE_NFTABLES)
+#if defined(USE_PF) || defined(USE_NFTABLES) || defined(USE_VPP)
 	return get_redirect_rule_count(ext_if_name);
 #else
 	int n = 0, r = 0;

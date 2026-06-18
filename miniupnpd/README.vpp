@@ -1,0 +1,141 @@
+MiniUPnPd — VPP NAT44-ED Backend
+=================================
+
+This backend installs UPnP / NAT-PMP / PCP port-forwarding rules as
+VPP NAT44-ED static mappings instead of nftables or iptables rules.
+
+Prerequisites
+-------------
+
+* VPP 24.10 or later with NAT44-ED enabled
+* vpp-dev package (provides VAPI headers in /usr/include/vapi/)
+* libvapiclient (linked at build time, loaded at runtime)
+
+VPP must be configured with NAT44-ED before starting miniupnpd:
+
+    nat44-ed enable
+
+Building
+--------
+
+    ./configure --firewall=vpp [--ipv6] [--igd2] [--leasefile]
+    make
+
+Or directly:
+
+    make -f Makefile.linux_vpp
+
+The VPP API socket path defaults to /run/vpp/vpe.sock.  Override at
+compile time with:
+
+    make CPPFLAGS="-DVPP_API_SOCK=\\\"/custom/path/vpe.sock\\\""
+
+Interface Names
+---------------
+
+**Important:** The `ext_ifname` setting in miniupnpd.conf must be a
+VPP interface name, not a Linux kernel interface name.
+
+VPP interface names look like:
+
+    GigabitEthernet0/0/0
+    TenGigabitEthernet0/0/0
+    VirtualEthernet0/0/0
+    BondEthernet0
+    tap0
+    host-vpp1
+
+They do NOT look like kernel names such as eth0, ens3, or enp0s3.
+
+To find VPP interface names, run:
+
+    vppctl show interface
+
+Example miniupnpd.conf snippet:
+
+    ext_ifname=GigabitEthernet0/0/0
+    listening_ip=192.168.1.1
+
+The WAN IP address is resolved directly from VPP's interface database
+(via the VAPI sw_interface_dump and ip_address_dump APIs), not from the
+Linux kernel.  There is no need to create a matching kernel interface or
+maintain a mapping between VPP and kernel interface names.
+
+How It Works
+------------
+
+miniupnpd connects to VPP over the VAPI Unix-domain socket (blocking
+mode).  When a UPnP client requests a port mapping:
+
+1. The WAN IP is looked up from the VPP interface specified by
+   ext_ifname.
+2. A nat44_add_del_static_mapping request is sent with NAT_IS_STATIC
+   flag and external_sw_if_index = ~0 (explicit IP mode).
+3. A 64-byte tag identifies the mapping's origin:
+   - "upnp:<description>" for UPnP mappings
+   - "natpmp" for NAT-PMP mappings (no description field in protocol)
+   - "pcp:<description>" for PCP PEER mappings
+
+Deletion reverses the process.  Queries use nat44_static_mapping_dump,
+filtering to entries whose tags start with "upnp:", "natpmp", or "pcp:".
+Updates preserve the original tag prefix.
+
+Sample miniupnpd.conf
+---------------------
+
+    # WAN interface — must be a VPP interface name (vppctl show interface)
+    ext_ifname=GigabitEthernet0/0/0
+
+    # LAN subnet(s) to serve
+    listening_ip=192.168.1.1/24
+
+    # Enable UPnP and NAT-PMP/PCP
+    enable_upnp=yes
+    enable_pcp_pmp=yes
+
+    # Lease file for persistence across restarts
+    lease_file=/var/lib/miniupnpd/leases
+
+    # IMPORTANT: disable traffic-based rule pruning.
+    # The VPP backend cannot report per-mapping packet/byte counters;
+    # enabling this would incorrectly remove active mappings.
+    clean_ruleset_interval=0
+
+    # Lease expiry still works (timestamp-based), so set a sane lifetime
+    min_lifetime=120
+    max_lifetime=86400
+
+    # Secure mode: clients can only map ports to their own IP
+    secure_mode=yes
+
+    # Permission rules
+    allow 1024-65535 192.168.1.0/24 1024-65535
+    deny 0-65535 0.0.0.0/0 0-65535
+
+Limitations
+-----------
+
+* Per-mapping packet/byte counters are not available from the
+  NAT44-ED static mapping API; they are reported as zero.
+  **clean_ruleset_interval must be set to 0** (disabled) to prevent
+  the traffic-based pruning logic from incorrectly deleting active
+  mappings.
+* Remote host filtering (rhost) is not supported by NAT44-ED static
+  mappings.
+* IPv6 pinholes are not implemented in this backend.
+
+systemd
+-------
+
+A VPP-specific systemd unit file is installed as miniupnpd.service.
+It declares Requires=vpp.service and After=vpp.service so that
+miniupnpd starts only after VPP is running.
+
+Files
+-----
+
+    miniupnpd/vpp/vpp_nat.c    — Backend implementation
+    miniupnpd/vpp/vpp_nat.h    — Public declarations (commonrdr.h interface)
+    miniupnpd/vpp/vpp_init.h   — Socket path and connection constants
+    miniupnpd/Makefile.linux_vpp — Build rules
+    miniupnpd/linux/miniupnpd.vpp.service — systemd unit
